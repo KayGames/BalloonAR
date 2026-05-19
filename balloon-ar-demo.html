@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🎈 Balloon AR Demo</title>
+
+  <!-- A-Frame & AR.js -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0a0a12;
+      overflow: hidden;
+    }
+
+    /* ── UI overlay ── */
+    #ui {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    /* Header */
+    #header {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 16px 20px 12px;
+      background: linear-gradient(to bottom, rgba(0,0,0,.7) 0%, transparent 100%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #header .logo {
+      font-size: 22px;
+      letter-spacing: .05em;
+      color: #fff;
+      font-weight: 700;
+    }
+    #header .logo span {
+      color: #ff6eb4;
+    }
+    #header .badge {
+      background: #ff6eb4;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    /* Finder frame */
+    #finder {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(280px, 70vw);
+      height: min(280px, 70vw);
+      pointer-events: none;
+    }
+    #finder::before,
+    #finder::after {
+      content: '';
+      position: absolute;
+      width: 36px; height: 36px;
+      border-color: #ff6eb4;
+      border-style: solid;
+    }
+    #finder::before {
+      top: 0; left: 0;
+      border-width: 3px 0 0 3px;
+      border-radius: 4px 0 0 0;
+    }
+    #finder::after {
+      bottom: 0; right: 0;
+      border-width: 0 3px 3px 0;
+      border-radius: 0 0 4px 0;
+    }
+    #finder .corner-tr,
+    #finder .corner-bl {
+      position: absolute;
+      width: 36px; height: 36px;
+      border-color: #ff6eb4;
+      border-style: solid;
+    }
+    #finder .corner-tr {
+      top: 0; right: 0;
+      border-width: 3px 3px 0 0;
+      border-radius: 0 4px 0 0;
+    }
+    #finder .corner-bl {
+      bottom: 0; left: 0;
+      border-width: 0 0 3px 3px;
+      border-radius: 0 0 0 4px;
+    }
+    /* scan line */
+    #finder .scanline {
+      position: absolute;
+      left: 4px; right: 4px;
+      height: 2px;
+      background: linear-gradient(to right, transparent, #ff6eb4, transparent);
+      animation: scan 2.5s ease-in-out infinite;
+      box-shadow: 0 0 8px #ff6eb4;
+    }
+    @keyframes scan {
+      0%   { top: 8px; opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { top: calc(100% - 10px); opacity: 0; }
+    }
+
+    /* Hint label */
+    #hint {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      color: rgba(255,255,255,.85);
+      font-size: 13px;
+      line-height: 1.6;
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 10px 20px;
+      border-radius: 24px;
+      border: 1px solid rgba(255,110,180,.3);
+      pointer-events: auto;
+    }
+    #hint strong {
+      color: #ff6eb4;
+    }
+    #hint a {
+      color: #7ec8ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    /* Detection flash */
+    #flash {
+      position: absolute;
+      inset: 0;
+      background: rgba(255,110,180,.18);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .15s;
+    }
+    #flash.active { opacity: 1; }
+
+    /* Status pill */
+    #status {
+      position: absolute;
+      top: 68px;
+      right: 16px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      padding: 4px 12px;
+      border-radius: 20px;
+      background: rgba(0,0,0,.5);
+      border: 1px solid rgba(255,255,255,.15);
+      color: rgba(255,255,255,.6);
+      transition: all .4s;
+    }
+    #status.found {
+      background: rgba(255,110,180,.2);
+      border-color: #ff6eb4;
+      color: #ff6eb4;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── AR Scene ── -->
+<a-scene
+  embedded
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+  renderer="logarithmicDepthBuffer: true; antialias: true;"
+  vr-mode-ui="enabled: false"
+  loading-screen="enabled: false"
+  id="arScene"
+>
+
+  <!-- Assets: ダミーキャラクター（プリミティブで構成） -->
+  <a-assets>
+    <!-- GLBを使う場合はここに <a-asset-item id="char" src="./character.glb"> を追加 -->
+  </a-assets>
+
+  <!-- Hiro マーカー -->
+  <a-marker
+    preset="hiro"
+    id="hiroMarker"
+    smooth="true"
+    smoothCount="5"
+    smoothTolerance="0.01"
+    smoothThreshold="2"
+  >
+    <!-- ── キャラクター本体（ダミー：バルーンっぽいロボット） ── -->
+    <a-entity id="character" position="0 0 0" rotation="0 0 0">
+
+      <!-- 登場アニメ用ラッパー -->
+      <a-entity id="charRoot" position="0 0 0" scale="0.001 0.001 0.001">
+
+        <!-- 体 -->
+        <a-sphere position="0 1.1 0" radius="0.45" color="#ff6eb4"
+          material="metalness:0.1; roughness:0.3; emissive:#441133; emissiveIntensity:0.2">
+        </a-sphere>
+
+        <!-- 頭 -->
+        <a-sphere position="0 1.85 0" radius="0.32" color="#ff9ed4"
+          material="metalness:0.1; roughness:0.3">
+        </a-sphere>
+
+        <!-- 目 L -->
+        <a-sphere position="-0.12 1.92 0.28" radius="0.07" color="#1a1a2e">
+        </a-sphere>
+        <a-sphere position="-0.12 1.92 0.28" radius="0.035" color="#7ec8ff"
+          material="emissive:#3399ff; emissiveIntensity:0.8">
+        </a-sphere>
+
+        <!-- 目 R -->
+        <a-sphere position="0.12 1.92 0.28" radius="0.07" color="#1a1a2e">
+        </a-sphere>
+        <a-sphere position="0.12 1.92 0.28" radius="0.035" color="#7ec8ff"
+          material="emissive:#3399ff; emissiveIntensity:0.8">
+        </a-sphere>
+
+        <!-- アンテナ -->
+        <a-cylinder position="0 2.28 0" radius="0.025" height="0.3" color="#cccccc">
+        </a-cylinder>
+        <a-sphere position="0 2.44 0" radius="0.055" color="#ffee44"
+          material="emissive:#ffcc00; emissiveIntensity:1.0">
+        </a-sphere>
+
+        <!-- 腕 L -->
+        <a-capsule position="-0.65 1.05 0" radius="0.1" height="0.45"
+          rotation="0 0 30" color="#ff6eb4"
+          material="metalness:0.1; roughness:0.3">
+        </a-capsule>
+
+        <!-- 腕 R -->
+        <a-capsule position="0.65 1.05 0" radius="0.1" height="0.45"
+          rotation="0 0 -30" color="#ff6eb4"
+          material="metalness:0.1; roughness:0.3">
+        </a-capsule>
+
+        <!-- 脚 L -->
+        <a-capsule position="-0.2 0.35 0" radius="0.1" height="0.45"
+          color="#cc4488"
+          material="metalness:0.1; roughness:0.3">
+        </a-capsule>
+
+        <!-- 脚 R -->
+        <a-capsule position="0.2 0.35 0" radius="0.1" height="0.45"
+          color="#cc4488"
+          material="metalness:0.1; roughness:0.3">
+        </a-capsule>
+
+        <!-- バルーン（頭上に浮く） -->
+        <a-sphere position="0 3.2 0" radius="0.55" color="#ff6eb4"
+          material="opacity:0.75; transparent:true; side:double; emissive:#881144; emissiveIntensity:0.15"
+          animation="property: position; to: 0 3.4 0; dur: 1800; dir: alternate; loop: true; easing: easeInOutSine">
+        </a-sphere>
+        <!-- バルーン糸 -->
+        <a-cylinder position="0 2.6 0" radius="0.012" height="0.6"
+          color="#ffffff" material="opacity:0.5; transparent:true">
+        </a-cylinder>
+
+        <!-- ふわふわ揺れ -->
+        <a-entity
+          animation__bob="property: position; from: 0 0 0; to: 0 0.08 0; dur: 2200; dir: alternate; loop: true; easing: easeInOutSine">
+        </a-entity>
+
+      </a-entity><!-- /charRoot -->
+    </a-entity><!-- /character -->
+
+    <!-- 足元グロー -->
+    <a-plane
+      position="0 0.01 0"
+      rotation="-90 0 0"
+      width="1.4" height="1.4"
+      color="#ff6eb4"
+      material="opacity:0.18; transparent:true; side:double"
+      animation="property: material.opacity; from: 0.08; to: 0.25; dur: 1400; dir: alternate; loop: true; easing: easeInOutSine">
+    </a-plane>
+
+    <!-- パーティクル風：星形スプライト -->
+    <a-entity id="particles"></a-entity>
+
+  </a-marker>
+
+  <!-- カメラ -->
+  <a-entity camera></a-entity>
+
+</a-scene>
+
+<!-- ── UI Overlay ── -->
+<div id="ui">
+  <div id="flash"></div>
+
+  <div id="header">
+    <div class="logo">🎈 Balloon<span>AR</span></div>
+    <div class="badge">Demo</div>
+  </div>
+
+  <div id="status">📷 カメラ起動中…</div>
+
+  <div id="finder">
+    <div class="corner-tr"></div>
+    <div class="corner-bl"></div>
+    <div class="scanline"></div>
+  </div>
+
+  <div id="hint">
+    <strong>Hiro マーカー</strong>にカメラを向けてください<br>
+    <a href="https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/images/hiro.png" target="_blank">▶ Hiroマーカー画像を開く</a>
+    &nbsp;→ 印刷 or 画面表示
+  </div>
+</div>
+
+<script>
+  // ── 登場アニメ ──
+  const charRoot = document.getElementById('charRoot');
+  const flash    = document.getElementById('flash');
+  const status   = document.getElementById('status');
+  const marker   = document.getElementById('hiroMarker');
+
+  let visible = false;
+
+  function popIn() {
+    if (visible) return;
+    visible = true;
+
+    status.textContent = '✨ キャラクター出現！';
+    status.classList.add('found');
+
+    // スケールをぽわっと0→1
+    charRoot.setAttribute('scale', '0.001 0.001 0.001');
+    charRoot.setAttribute('animation__scalein', {
+      property: 'scale',
+      from:    '0.001 0.001 0.001',
+      to:      '1 1 1',
+      dur:     600,
+      easing:  'easeOutBack'
+    });
+
+    // フラッシュ
+    flash.classList.add('active');
+    setTimeout(() => flash.classList.remove('active'), 200);
+
+    // パーティクル生成
+    spawnParticles();
+  }
+
+  function popOut() {
+    if (!visible) return;
+    visible = false;
+    status.textContent = '🔍 マーカーを探しています…';
+    status.classList.remove('found');
+
+    charRoot.setAttribute('animation__scaleout', {
+      property: 'scale',
+      to:      '0.001 0.001 0.001',
+      dur:     300,
+      easing:  'easeInBack'
+    });
+  }
+
+  marker.addEventListener('markerFound',  popIn);
+  marker.addEventListener('markerLost',   popOut);
+
+  // カメラ起動確認
+  setTimeout(() => {
+    if (!visible) status.textContent = '🔍 マーカーを探しています…';
+  }, 2000);
+
+  // ── パーティクル（シンプルな球をランダム配置） ──
+  function spawnParticles() {
+    const container = document.getElementById('particles');
+    // 古いものを削除
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    const colors = ['#ff6eb4','#ffee44','#7ec8ff','#ffffff','#ffaacc'];
+    for (let i = 0; i < 14; i++) {
+      const p = document.createElement('a-sphere');
+      const angle  = Math.random() * Math.PI * 2;
+      const radius = 0.5 + Math.random() * 0.8;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const y = 0.1 + Math.random() * 0.6;
+      const size  = 0.04 + Math.random() * 0.06;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const rise  = y + 0.6 + Math.random() * 0.8;
+      const dur   = 800 + Math.random() * 600;
+
+      p.setAttribute('position', `${x} ${y} ${z}`);
+      p.setAttribute('radius', size);
+      p.setAttribute('color', color);
+      p.setAttribute('material', `emissive:${color}; emissiveIntensity:0.6; opacity:0.9; transparent:true`);
+      p.setAttribute('animation__rise', {
+        property: 'position',
+        to:      `${x * 1.5} ${rise} ${z * 1.5}`,
+        dur:     dur,
+        easing:  'easeOutCubic'
+      });
+      p.setAttribute('animation__fade', {
+        property: 'material.opacity',
+        from:     '0.9',
+        to:       '0',
+        dur:      dur,
+        easing:   'easeInCubic'
+      });
+      container.appendChild(p);
+    }
+  }
+</script>
+</body>
+</html>
